@@ -1,0 +1,39 @@
+services:
+  qbzd:
+    build:
+      context: .
+      args:
+        QBZD_VERSION: ${QBZD_VERSION:-2.0.2}
+    image: qbzd:${QBZD_VERSION:-2.0.2}
+    container_name: qbzd
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 20s
+
+    # Runs unprivileged; /data on the host must be writable by this uid/gid.
+    user: "${QBZD_UID:-1000}:${QBZD_GID:-1000}"
+    # Supplementary group owning /dev/snd on the host (Debian/Raspberry Pi OS
+    # use 29, Arch uses 995 — check with `stat -c %g /dev/snd`).
+    group_add:
+      - "${AUDIO_GID:-29}"
+
+    # ALSA access to the DAC. Remove this block on hosts without /dev/snd
+    # (Docker Desktop on macOS/Windows) — the daemon then has no audio output.
+    devices:
+      - /dev/snd:/dev/snd
+
+    ports:
+      # Control API + HTTP endpoints. Never port-forward this off the LAN.
+      - "${QBZD_PORT:-8182}:8182"
+
+    volumes:
+      # config/, share/ and cache/ subtrees of the daemon profile.
+      - ./data:/data
+
+    environment:
+      TZ: ${TZ:-UTC}
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

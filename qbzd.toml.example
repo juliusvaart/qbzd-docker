@@ -1,0 +1,21 @@
+# qbzd.toml — process-level settings only.
+# Audio device, playback quality and Qobuz Connect naming live in the daemon's
+# stores instead: set them with `qbzd setup` (TUI) or `qbzd settings set`.
+config_version = 1
+
+[server]
+# The control API is LAN-first by design (Sonos/Chromecast posture). Inside a
+# container it must bind all interfaces for the published port to reach it;
+# restrict exposure with the compose port mapping, not with this value.
+bind = "0.0.0.0"
+port = 8182
+# Uncomment to require `Authorization: Bearer <token>` on every route but
+# /api/ping. Recommended whenever the port is reachable beyond a trusted LAN.
+# token = "change-me"
+
+[log]
+level = "info"
+
+[mpris]
+# No D-Bus session bus in the container, so desktop media controls cannot work.
+enabled = false
