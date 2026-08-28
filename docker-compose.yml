@@ -38,3 +38,41 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+  # Applies the daemon's volume to the DAC's own mixer control, because qbzd's
+  # hardware-volume lookup only matches conventional element names. Drop this
+  # service on a DAC whose control is called Master/PCM — the daemon handles
+  # those itself. ALSA_CARD/ALSA_CONTROL have no sane defaults; find them with
+  # `aplay -L` and `amixer -c <card> scontrols`.
+  volume-bridge:
+    image: qbzd:${QBZD_VERSION:-2.0.2}
+    container_name: qbzd-volume-bridge
+    # Opt-in: `docker compose --profile volume-bridge up -d`. Without this the
+    # service would still be interpolated on every plain `up`, and its required
+    # ALSA_CARD/ALSA_CONTROL would break the stack for everyone else.
+    profiles:
+      - volume-bridge
+    restart: unless-stopped
+    init: true
+    depends_on:
+      - qbzd
+    entrypoint: ["/usr/local/bin/volume-bridge.sh"]
+
+    user: "${QBZD_UID:-1000}:${QBZD_GID:-1000}"
+    group_add:
+      - "${AUDIO_GID:-29}"
+    devices:
+      - /dev/snd:/dev/snd
+
+    environment:
+      QBZD_HOST: qbzd:8182
+      # Unset here on purpose: the script fails with an explicit message naming
+      # the command that finds each value.
+      ALSA_CARD: ${ALSA_CARD:-}
+      ALSA_CONTROL: ${ALSA_CONTROL:-}
+      TZ: ${TZ:-UTC}
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

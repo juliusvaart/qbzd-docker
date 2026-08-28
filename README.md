@@ -54,16 +54,69 @@ docker compose exec qbzd qbzd settings import /data/qbz-settings-XXXX.qbzb --inc
 
 ```bash
 docker compose exec qbzd aplay -L                    # list ALSA devices
+docker compose exec qbzd qbzd settings set audio.backend alsa
 docker compose exec qbzd qbzd settings set audio.device 'hw:CARD=sndrpihifiberry,DEV=0'
 docker compose exec qbzd qbzd settings set qconnect.device_name 'Living Room'
 docker compose exec qbzd qbzd settings set playback.quality hires
 docker compose restart qbzd
 ```
 
+`audio.backend` matters here: it defaults to `system`, meaning the host sound
+server, and there is no PipeWire or PulseAudio in the container. Set it to
+`alsa` so the daemon drives `/dev/snd` directly.
+
 `docker compose exec -it qbzd qbzd setup` opens the six-screen TUI configurator
 if you prefer that to individual keys.
 
-### 3. Verify and play
+### 3. Enable the Connect endpoint
+
+QConnect is off until you turn it on, and `qbzd settings set qconnect.enabled`
+is not the key — it lives under its own subcommand:
+
+```bash
+docker compose exec qbzd qbzd qconnect enable
+docker compose exec qbzd qbzd settings set qconnect.startup_mode on   # across restarts
+```
+
+### 4. Volume on DACs with an unconventional mixer name
+
+The daemon's hardware-volume path matches conventional ALSA element names
+(`Master`, `PCM`, `Headphone`, …). Many USB DACs name their single control
+after the device — a Topping D50 III exposes `'D50 III'` — so the lookup fails
+and the log shows `No volume control found`. Check yours:
+
+```bash
+docker compose exec qbzd amixer -c <card> scontrols
+```
+
+A conventional name means the daemon handles volume itself: enable it and
+delete the `volume-bridge` service from `docker-compose.yml`.
+
+```bash
+docker compose exec qbzd qbzd settings set audio.alsa_hardware_volume true
+```
+
+An unconventional name means the `volume-bridge` service does the work. Set
+`ALSA_CARD` and `ALSA_CONTROL` in `.env` to the values above, and leave
+`audio.alsa_hardware_volume` enabled — the daemon's failing attempt is what
+stops it applying software attenuation, so the samples reach the DAC untouched
+and the DAC's own control does the attenuating.
+
+The service sits behind a compose profile, so it only runs when you ask for it:
+
+```bash
+docker compose --profile volume-bridge up -d --build
+docker compose logs -f qbzd-volume-bridge
+```
+
+Keep using `--profile volume-bridge` on later `up` calls, or the bridge is left
+stopped while the daemon restarts.
+
+The alternative is software volume — `audio.alsa_hardware_volume false`, no
+bridge service — which works everywhere but scales samples in the daemon and
+gives up bit-perfect output.
+
+### 5. Verify and play
 
 ```bash
 docker compose exec qbzd qbzd status     # auth, audio, playback, QConnect state
@@ -161,18 +214,43 @@ from `.env` — which default to `1000:1000`, not to root. Working as `root`,
 chown "${QBZD_UID:-1000}:${QBZD_GID:-1000}" data
 ```
 
-**`qbzd status` shows the DAC as `not present` while `aplay -L` lists it:** the
-container cannot open the device. `aplay -L` only parses ALSA's configuration —
-it prints the card whether or not the process may use it — so a listing is not
-evidence of access. Compare the gid of the device nodes with the groups the
-daemon actually holds:
+**`qbzd status` says `not present` but playback works:** Docker masks
+`/proc/asound` by default — it is in the standard masked-paths set with
+`/proc/kcore` and `/proc/acpi` — and the daemon's presence check reads
+`/proc/asound/cards`. ALSA output itself goes through `/dev/snd`, which is
+passed through, so this is a false negative and not a fault. Confirm with
+`docker inspect qbzd --format '{{.HostConfig.MaskedPaths}}' | grep asound`, and
+check the log for `[ALSA Direct Engine]` lines to see the real state.
+
+Leave it masked unless hires playback degrades. `curl -s
+localhost:8182/api/status | jq .audio` during a 24/192 track reports the
+negotiated PCM parameters, which come from the open device rather than from
+`/proc`; if they read `44100`/`16` on a hires track, unmask by adding
+`- systempaths=unconfined` to `security_opt` in `docker-compose.yml`. That
+unmasks every masked path and drops the read-only guard on `/proc/sys`, so it
+trades container hardening for the fix — with `cap_drop: ALL` in place, mostly
+read access to host kernel state. Bind-mounting only `/proc/asound` does not
+work: runc applies masked paths after mounts, so the mask wins.
+
+**No sound at all, or the daemon cannot open the device:** the container is
+missing the ALSA group. Note that `aplay -L` is no test for this — it only
+parses ALSA's configuration and prints the card whether or not the process may
+use it. Compare the gid of the device nodes with the groups the daemon holds:
 
 ```bash
 stat -c %g /dev/snd/controlC0        # host side
 docker compose exec qbzd id          # groups= must contain that gid
 ```
 
-Set `AUDIO_GID` in `.env` to the first value and `docker compose up -d`.
+Set `AUDIO_GID` in `.env` to the first value and `docker compose up -d`. A
+recreate is required; `docker compose restart` will not change `group_add`.
+Running the container as `root` does not help either — `cap_drop: ALL` removes
+`CAP_DAC_OVERRIDE`, so uid 0 gets no exemption from the `crw-rw---- root audio`
+mode on the nodes. For a real open test, write a second of silence:
+
+```bash
+docker compose exec qbzd aplay -D hw:CARD=<name>,DEV=0 -f S32_LE -r 44100 -c 2 -d 1 /dev/zero
+```
 
 ## Notes and limitations
 

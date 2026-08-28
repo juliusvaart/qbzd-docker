@@ -49,6 +49,7 @@ RUN apt-get update \
 COPY --from=fetch /out/usr/bin/qbzd /usr/bin/qbzd
 COPY qbzd.toml.example /usr/share/qbzd/qbzd.toml.example
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY volume-bridge.sh /usr/local/bin/volume-bridge.sh
 
 # Credential encryption derives its key from a machine identifier, trying
 # /etc/machine-id first. Debian images ship that file empty, which would make
