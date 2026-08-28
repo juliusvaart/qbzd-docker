@@ -116,6 +116,47 @@ Or drive the HTTP API directly: `/api/status`, `/api/now-playing`,
 
 Back up `config/qbzd/` to keep the login; it is as sensitive as a password.
 
+## Troubleshooting
+
+**The image builds, but the container will not start:**
+
+```
+OCI runtime create failed: runc create failed: unable to apply cgroup
+configuration: unable to start unit "docker-<id>.scope" (...):
+The name org.freedesktop.systemd1 was not provided by any .service files
+```
+
+Docker is using the systemd cgroup driver — the default since Engine 26 when
+systemd is PID 1 — but the host has no D-Bus system bus for `runc` to create the
+transient scope unit on. Trimmed Debian images such as DietPi ship without the
+`dbus` package, which is the usual cause. Install the bus:
+
+```bash
+apt-get install -y dbus
+systemctl enable --now dbus.socket dbus.service
+systemctl restart docker
+```
+
+Or, to keep the host free of D-Bus, have Docker manage cgroups itself by merging
+this into `/etc/docker/daemon.json` and restarting the daemon:
+
+```json
+{ "exec-opts": ["native.cgroupdriver=cgroupfs"] }
+```
+
+Confirm the driver afterwards with `docker info | grep -i cgroup`.
+
+**The entrypoint exits with `Permission denied` under `/data`:** `./data` is not
+owned by the uid the container runs as. The daemon runs unprivileged and creates
+its profile directories itself, so ownership must match `QBZD_UID`/`QBZD_GID`
+from `.env` — which default to `1000:1000`, not to root. Working as `root`,
+`chown "$(id -u):$(id -g)" data` yields `0:0`, so either set both variables to
+`0` or chown `./data` to the uid you configured:
+
+```bash
+chown "${QBZD_UID:-1000}:${QBZD_GID:-1000}" data
+```
+
 ## Notes and limitations
 
 - **MPRIS is disabled.** There is no D-Bus session bus in the container, so
