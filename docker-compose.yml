@@ -12,8 +12,9 @@ services:
 
     # Runs unprivileged; /data on the host must be writable by this uid/gid.
     user: "${QBZD_UID:-1000}:${QBZD_GID:-1000}"
-    # Supplementary group owning /dev/snd on the host (Debian/Raspberry Pi OS
-    # use 29, Arch uses 995 — check with `stat -c %g /dev/snd`).
+    # Supplementary group owning the ALSA device nodes on the host (Debian and
+    # Raspberry Pi OS use 29, Arch uses 995 — check the nodes themselves with
+    # `stat -c %g /dev/snd/controlC0`, not the enclosing directory).
     group_add:
       - "${AUDIO_GID:-29}"
 

@@ -17,8 +17,8 @@ API but cannot produce sound — there is no ALSA device inside the VM.
 ## Quick start
 
 ```bash
-cp .env.example .env          # adjust QBZD_UID/QBZD_GID and AUDIO_GID
-stat -c %g /dev/snd           # the value AUDIO_GID needs
+cp .env.example .env               # adjust QBZD_UID/QBZD_GID and AUDIO_GID
+stat -c %g /dev/snd/controlC0      # the value AUDIO_GID needs
 mkdir -p data && chown "$(id -u):$(id -g)" data
 
 docker compose up -d --build
@@ -126,25 +126,29 @@ configuration: unable to start unit "docker-<id>.scope" (...):
 The name org.freedesktop.systemd1 was not provided by any .service files
 ```
 
-Docker is using the systemd cgroup driver — the default since Engine 26 when
-systemd is PID 1 — but the host has no D-Bus system bus for `runc` to create the
-transient scope unit on. Trimmed Debian images such as DietPi ship without the
-`dbus` package, which is the usual cause. Install the bus:
+Docker defaults to the systemd cgroup driver when systemd is PID 1, so `runc`
+asks systemd over D-Bus to create a transient scope unit for the container. On
+DietPi that request has no recipient: systemd runs as PID 1 and the bus is up,
+but systemd never registers `org.freedesktop.systemd1` on it — the image boots
+with D-Bus activation trimmed away. Installing `dbus` and re-executing PID 1 do
+not help; `busctl --system list | grep systemd1` stays empty either way.
 
-```bash
-apt-get install -y dbus
-systemctl enable --now dbus.socket dbus.service
-systemctl restart docker
-```
-
-Or, to keep the host free of D-Bus, have Docker manage cgroups itself by merging
-this into `/etc/docker/daemon.json` and restarting the daemon:
+The fix is to stop asking systemd. Merge this into `/etc/docker/daemon.json`
+(create the file if absent) so Docker writes the cgroups itself:
 
 ```json
 { "exec-opts": ["native.cgroupdriver=cgroupfs"] }
 ```
 
-Confirm the driver afterwards with `docker info | grep -i cgroup`.
+```bash
+systemctl restart docker
+docker info | grep -i cgroup     # Cgroup Driver: cgroupfs
+```
+
+Docker and systemd then own separate subtrees of the cgroup v2 hierarchy, which
+is harmless on a single-purpose audio host. On a normal Debian install where
+`busctl --system list` *does* show `systemd1`, this error means the bus itself is
+down — start `dbus.socket` and restart Docker rather than switching drivers.
 
 **The entrypoint exits with `Permission denied` under `/data`:** `./data` is not
 owned by the uid the container runs as. The daemon runs unprivileged and creates
@@ -156,6 +160,19 @@ from `.env` — which default to `1000:1000`, not to root. Working as `root`,
 ```bash
 chown "${QBZD_UID:-1000}:${QBZD_GID:-1000}" data
 ```
+
+**`qbzd status` shows the DAC as `not present` while `aplay -L` lists it:** the
+container cannot open the device. `aplay -L` only parses ALSA's configuration —
+it prints the card whether or not the process may use it — so a listing is not
+evidence of access. Compare the gid of the device nodes with the groups the
+daemon actually holds:
+
+```bash
+stat -c %g /dev/snd/controlC0        # host side
+docker compose exec qbzd id          # groups= must contain that gid
+```
+
+Set `AUDIO_GID` in `.env` to the first value and `docker compose up -d`.
 
 ## Notes and limitations
 
