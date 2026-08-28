@@ -65,6 +65,10 @@ docker compose restart qbzd
 server, and there is no PipeWire or PulseAudio in the container. Set it to
 `alsa` so the daemon drives `/dev/snd` directly.
 
+`audio.dsd_mode` takes `convert`, `dop` or `native` — there is no off. `convert`
+decodes DSD to PCM and is what you want unless the DAC should receive DSD
+itself; `dop` wraps it in PCM frames and `native` sends it raw.
+
 `docker compose exec -it qbzd qbzd setup` opens the six-screen TUI configurator
 if you prefer that to individual keys.
 
